@@ -1,0 +1,106 @@
+version: 3.2.47
+
+services:
+  backend:
+    container_name: Django
+    build:
+      context: ./backend/
+      dockerfile: Dockerfile
+      args:
+        - ENV_FILE=./env_file.env
+    env_file:
+      - env_file.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/service/:/service
+    command: >
+      sh -c 
+      "python manage.py makemigrations && python manage.py migrate && python create_superuser.py &&
+      gunicorn --bind 0.0.0.0:8000 service.wsgi:application"
+    depends_on:
+      - database
+  
+  database:
+    container_name: Postgres
+    image: postgres:14-alpine3.17
+    env_file:
+      - env_file.env
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7.0.5-alpine3.17
+    hostname: redis
+
+  worker:
+    container_name: Celery
+    build:
+      context: ./backend/
+    hostname: worker
+    entrypoint: celery
+    command: -A celery_app.app worker --loglevel=info
+    volumes:
+      - ./backend/service/:/service
+      - static_data:/service/static
+    env_file:
+      - env_file.env
+    links:
+      - redis
+    depends_on:
+      - redis
+      - database
+
+  flower:
+    container_name: Flower
+    build:
+      context: ./backend/
+    hostname: flower
+    entrypoint: celery
+    command: -A celery_app.app flower
+    volumes:
+      - ./backend/service/:/service
+    links:
+      - redis
+    depends_on:
+      - redis
+    ports:
+      - "5555:5555"
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    volumes:
+      - ./frontend/public:/frontend/public
+      - ./frontend/src:/frontend/src
+      - ./frontend/.eslintrc.cjs:/frontend/.eslintrc.cjs
+      - ./frontend/index.html:/frontend/index.html
+      - ./frontend/tsconfig.json:/frontend/tsconfig.json
+      - ./frontend/tsconfig.node.json:/frontend/tsconfig.node.json
+      - ./frontend/vite.config.ts:/frontend/vite.config.ts
+    environment:
+      - VITE_HOST=localhost
+    ports:
+      - "5173:5173"
+    command: [ "npm", "run", "dev" ]
+
+  nginx:
+    container_name: Nginx
+    image: nginx:1.21.0-alpine
+    env_file:
+      - env_file.env
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/loggs:/etc/nginx/loggs
+      - static_data:/service/static
+      - dist_data:/etc/dist/
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  static_data:
+  dist_data:
